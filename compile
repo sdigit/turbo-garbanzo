@@ -1,0 +1,6 @@
+#!/bin/sh
+rm -rf build
+mkdir -m 0755 build
+cd build
+cmake ..
+make
