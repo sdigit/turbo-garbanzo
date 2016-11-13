@@ -49,7 +49,7 @@
 #define MAX_SUN_LEN         92
 
 /*
- * we should already have this, but might not.
+ * Linux doesn't expose this macro from sys/un.h; use NetBSD's version.
  */
 #ifndef SUN_LEN
 #define SUN_LEN(su) \
