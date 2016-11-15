@@ -43,4 +43,6 @@ struct pytb_header     /* our header */
  */
 #define PYTB_HEADERSIZE sizeof(struct pytb_header)
 
+size_t pytb_killnewline(char *buf);
+
 #endif /* SOCKETUTILS_UNIX_H */
