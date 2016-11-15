@@ -24,12 +24,20 @@
  * SUCH DAMAGE.
  */
 
+/*
+ * Adjust these as necessary.
+ */
+#define PYTB_MAXLEN         16384               /* maximum message size to accept */
+#define PYTB_SOCKETPATH     "/tmp/pytb.sock"    /* path to our socket */
+#define PYTB_QLEN           5                   /* queue 5 connections before dropping further attempts */
+
 #ifndef _XOPEN_SOURCE
 # define _XOPEN_SOURCE 600
 #endif /* _XOPEN_SOURCE */
 
 #include <err.h>
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,9 +45,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
-#include "tg.h"
 
-#define SOCKET_BACKLOG      5       /* queue 5 connections before dropping further attempts */
 /*
  * The maximum address length (file path length) of a unix domain socket is not
  * defined by POSIX. 4.4BSD uses 104 bytes, glibc uses 108, and the documentation
@@ -54,22 +60,144 @@
     (sizeof(*(su)) - sizeof((su)->sun_path) + strlen((su)->sun_path))
 #endif /* SUN_LEN */
 
+struct pytb_header     /* our header */
+{
+    int32_t  tb_pid;   /* PID of connecting process */
+    uint64_t tb_len;   /* Traceback length in bytes */
+} __attribute__ ((packed));
+/*
+ * This should always be 12 bytes, but lets be nice and let the preprocessor figure that out.
+ */
+#define PYTB_HEADERSIZE sizeof(struct pytb_header)
 
-static int unix_listen(const char *path);
+static size_t pytb_killnewline(char *buf);
+
+static void pytb_handle_client(int client_fd);
+
+static int pytb_server(const char *path);
+
+static void pytb_main_loop(void);
 
 /*
- * unix_listen(path)
+ * pytb_killnewline(buf)
  *
- * Utility function to open, bind, and listen on a UNIX domain socket.
+ * Replace any trailing line endings with NULs.
+ *
+ * This function was written by Jens Steube for the Hashcat project, and modified
+ * (renamed, blank lines removed) by Sean Davis as part of adding it to TG.
+ *
+ * This code is used under a BSD license with permission from Jens; the purpose
+ * of this is simply to avoid any confusion from mixing licenses.
+ */
+static size_t pytb_killnewline(char *buf)
+{
+    size_t len = strlen(buf);
+
+    while (len)
+    {
+        if (buf[len - 1] == '\n')
+        {
+            len--;
+            continue;
+        }
+        if (buf[len - 1] == '\r')
+        {
+            len--;
+            continue;
+        }
+        break;
+    }
+    buf[len] = 0;
+    return len;
+}
+
+/*
+ * pytb_handle_client(client_fd)
+ *
+ * This function reads a header and then message from the specified client.
+ * Connections with invalid headers are silently dropped, as are messages that
+ * are not properly NUL-terminated.
+ */
+static void pytb_handle_client(int client_fd)
+{
+    size_t             items_read;
+    size_t             buflen;
+    FILE               *client;
+    char               *buf;
+    struct pytb_header hdr;
+
+    client = fdopen(client_fd, "r");
+    if (setvbuf(client, NULL, _IONBF, 0) != 0)
+    {
+        /* Don't trust things to work if we can't disable buffering */
+        goto nodata;
+    }
+    /* read the header */
+    items_read = fread(&hdr, PYTB_HEADERSIZE, 1, client);
+    if (items_read != 1)
+    {
+        /*
+         * Cannot continue if we didn't get one and exactly one item of PYTB_HEADERSIZE bytes.
+         */
+        goto nodata;
+    }
+    else if (hdr.tb_len > PYTB_MAXLEN || hdr.tb_len < 3)
+    {
+        /*
+         * Cannot continue with an invalid length.
+         * Minimum set to 3 so we don't break when we try to look at buf[buflen-2].
+         * (a one or two character message would be useless, but not invalid)
+         */
+        goto nodata;
+    }
+    else if (hdr.tb_pid < 1)
+    {
+        /* valid PIDs are never negative. */
+        goto nodata;
+    }
+
+    buflen = hdr.tb_len;
+    buf    = calloc(1, buflen + 1);
+    if (buf == NULL)
+    {
+        /*
+         * Cannot continue if we cannot allocate memory.
+         */
+        goto nodata;
+    }
+
+    items_read = fread(buf, hdr.tb_len, 1, client);         /* read the message */
+    if (items_read == 1)                                    /* got expected number of bytes */
+    {
+        if (buf[buflen - 1] == 0)                           /* message is properly terminated */
+        {
+            pytb_killnewline(buf);
+            printf("VALID message from PID %d\n", hdr.tb_pid);
+            printf("\"%s\"\n", buf);
+        }
+    }
+
+    /* clean up */
+    memset(buf, 0, buflen);
+    free(buf);
+
+    nodata:
+    fclose(client);     /* this closes client_fd as well */
+}
+
+/*
+ * pytb_server(path)
+ *
+ * Open and listen on a UNIX domain socket for connections.
  *
  * Returns a file descriptor corresponding to the open socket,
  * or -1 if an error was detected.
  */
-static int unix_listen(const char *path)
+static int pytb_server(const char *path)
 {
     struct stat        st;
     struct sockaddr_un sun;
-    int                s;
+    int                server;
     int                ret;
 
     if (strlen(path) > MAX_SUN_LEN || strlen(path) == 0)
@@ -109,62 +237,73 @@ static int unix_listen(const char *path)
     sun.sun_family = AF_UNIX;
     strncpy(sun.sun_path, path, sizeof(sun.sun_path));
 
-    s = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (s == -1)
+    server = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server == -1)
     {
         return -1;
     }
 
-    ret = bind(s, (const struct sockaddr *) &sun, SUN_LEN(&sun));
+    ret = bind(server, (const struct sockaddr *) &sun, SUN_LEN(&sun));
     if (ret == -1)
     {
-        close(s);
+        close(server);
         return -1;
     }
 
-    ret = listen(s, SOCKET_BACKLOG);
+    ret = listen(server, PYTB_QLEN);
     if (ret == -1)
     {
-        close(s);
+        close(server);
         return -1;
     }
 
-    return s;
+    return server;
 }
 
 /*
- * unix_socket_server(path,handler)
+ * pytb_main_loop(path,handler)
  *
  * Create a socket at the specified path, and accept connections.
- * handler is called with the fd of the new connection, and is
+ * pytb_handle_client is called with the fd of the new connection, and is
  * expected to take care of closing the descriptor properly.
  */
-void unix_socket_server(const char *path,
-                        void (*handler)(int))
+static void pytb_main_loop()
 {
     int                fd;
-    int                c;
     struct sockaddr_un sa;
     socklen_t          sa_len;
 
     sa_len = sizeof(sa);
-    fd     = unix_listen(path);
+    fd     = pytb_server(PYTB_SOCKETPATH);
     if (fd < 0)
     {
-        errx(EXIT_FAILURE, "unix_listen() returned %d", fd);
+        errx(EXIT_FAILURE, "pytb_server(): %s", strerror(errno));
     }
 
-    memset(&sa, 0, sa_len);
     while (1)
     {
-        c = accept(fd, (struct sockaddr *) &sa, &sa_len);
-        if (c > -1)
+        int client;
+        memset(&sa, 0, sa_len);
+        sa_len = sizeof(struct sockaddr_un);
+        client = accept(fd, (struct sockaddr *) &sa, &sa_len);
+        if (client > -1)
         {
-            handler(c);
+            pytb_handle_client(client);
         }
         else
         {
             break;
         }
     }
+}
+
+#ifdef DEBUG
+
+int main(void);
+
+#endif /* DEBUG */
+
+int main()
+{
+    pytb_main_loop();
 }

@@ -14,10 +14,7 @@ ELSEIF (CMAKE_C_COMPILER MATCHES "/icc$")
   SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -w3 -Wcheck -diag-error=warn,error")
 ENDIF ()
 
-SET(SOURCE_FILES
-    src/strings.c
-    src/server.c
-    src/reader.c)
+SET(SOURCE_FILES src/server.c)
 
 # add -DDEBUG and -ggdb when debugging
 SET(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -DDEBUG -ggdb")
