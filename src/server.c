@@ -39,22 +39,21 @@
 #include <sys/stat.h>
 #include "server.h"
 
-#define SOCKET_BACKLOG      5   /* queue 5 connections before dropping further attempts */
-
+#define SOCKET_BACKLOG      5       /* queue 5 connections before dropping further attempts */
 /*
  * The maximum address length (file path length) of a unix domain socket is not
  * defined by POSIX. 4.4BSD uses 104 bytes, glibc uses 108, and the documentation
  * mentions other systems which use 92. Use the smallest of the three.
  */
 #define MAX_SUN_LEN         92
-
 /*
  * Linux doesn't expose this macro from sys/un.h; use NetBSD's version.
  */
 #ifndef SUN_LEN
 #define SUN_LEN(su) \
     (sizeof(*(su)) - sizeof((su)->sun_path) + strlen((su)->sun_path))
-#endif
+#endif /* SUN_LEN */
+
 
 static int unix_listen(const char *path);
 
