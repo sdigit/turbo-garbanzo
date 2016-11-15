@@ -24,17 +24,17 @@
  * SUCH DAMAGE.
  */
 
-/*
- * This code was written by Jens Steube for the Hashcat project, and modified
- * very slightly by Sean Davis as part of adding it to TG.
- *
- * This code is used under a BSD license with permission from Jens; the purpose
- * of this is simply to avoid any confusion from mixing licenses.
- */
 
 #include <string.h>
 #include "tg.h"
 
+/*
+ * This function was written by Jens Steube for the Hashcat project, and modified
+ * (renamed, blank lines removed) by Sean Davis as part of adding it to TG.
+ *
+ * This code is used under a BSD license with permission from Jens; the purpose
+ * of this is simply to avoid any confusion from mixing licenses.
+ */
 size_t pytb_killnewline(char *buf)
 {
     size_t len = strlen(buf);
