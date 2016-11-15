@@ -31,7 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "server.h"
+#include "tg.h"
 
 #define TB_LEN_MAX  16384UL /* sending process needs to respect this too */
 
@@ -42,20 +42,19 @@ int main(void);
 static void handle_client_message(int client_fd)
 {
     size_t             items_read;
+    size_t             buflen;
     FILE               *client;
-    struct pytb_header hdr;
     char               *buf;
+    struct pytb_header hdr;
 
     client = fdopen(client_fd, "r");
-    if (setvbuf(client, NULL, _IONBF, 0) != 0)              /* disable buffering */
+    if (setvbuf(client, NULL, _IONBF, 0) != 0)
     {
-        /*
-         * Don't trust things to work if we can't disable buffering
-         */
+        /* Don't trust things to work if we can't disable buffering */
         goto nodata;
     }
-
-    items_read = fread(&hdr, PYTB_HEADERSIZE, 1, client);   /* read the header */
+    /* read the header */
+    items_read = fread(&hdr, PYTB_HEADERSIZE, 1, client);
     if (items_read != 1)
     {
         /*
@@ -63,15 +62,23 @@ static void handle_client_message(int client_fd)
          */
         goto nodata;
     }
-    else if (hdr.tb_len > TB_LEN_MAX || hdr.tb_len == 0 || hdr.tb_pid < 1)
+    else if (hdr.tb_len > TB_LEN_MAX || hdr.tb_len < 3)
     {
         /*
-         * Cannot continue if the traceback length or PID are invalid.
+         * Cannot continue with an invalid length.
+         * Minimum set to 3 so we don't break when we try to look at buf[buflen-2].
+         * (a one or two character message would be useless, but not invalid)
          */
         goto nodata;
     }
+    else if (hdr.tb_pid < 1)
+    {
+        /* valid PIDs are never negative. */
+        goto nodata;
+    }
 
-    buf = calloc(1, hdr.tb_len);
+    buflen = hdr.tb_len;
+    buf    = calloc(1, buflen + 1);
     if (buf == NULL)
     {
         /*
@@ -81,14 +88,28 @@ static void handle_client_message(int client_fd)
     }
 
     items_read = fread(buf, hdr.tb_len, 1, client);         /* read the message */
-    if (items_read == 1)
+    if (items_read == 1)                                    /* got expected number of bytes */
     {
-        printf("%d:%lu:\n", hdr.tb_pid, hdr.tb_len);
-        printf("%s\n",buf);
+        if (buf[buflen - 1] == 0)        /* message is properly terminated */
+        {
+            pytb_killnewline(buf);
+            printf("VALID message from PID %d\n", hdr.tb_pid);
+            printf("\"%s\"\n", buf);
+        }
+        else
+        {
+            printf("improperly terminated message was discarded.\n");
+        }
     }
-
+    else
+    {
+        printf("short message was discarded.\n");
+    }
+    /*
+     * If the lengths do not match, fall through since we're cleaning up anyway.
+     */
     /* clean up */
-    memset(buf,0,hdr.tb_len);
+    memset(buf, 0, buflen);
     free(buf);
 
     nodata:
