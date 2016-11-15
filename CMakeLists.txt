@@ -15,6 +15,7 @@ ELSEIF (CMAKE_C_COMPILER MATCHES "/icc$")
 ENDIF ()
 
 SET(SOURCE_FILES
+    src/strings.c
     src/server.c
     src/reader.c)
 

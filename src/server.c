@@ -37,7 +37,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
-#include "server.h"
+#include "tg.h"
 
 #define SOCKET_BACKLOG      5       /* queue 5 connections before dropping further attempts */
 /*
