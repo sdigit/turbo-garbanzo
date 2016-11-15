@@ -46,6 +46,17 @@
 #include <sys/un.h>
 #include <sys/stat.h>
 
+#ifdef PYTB_UWSGI_PLUGIN
+
+#include <uwsgi.h>
+
+extern struct uwsgi_server uwsgi;
+
+static int uwsgi_pytb_init(void);
+
+#endif /* PYTB_UWSGI_PLUGIN */
+
+
 /*
  * The maximum address length (file path length) of a unix domain socket is not
  * defined by POSIX. 4.4BSD uses 104 bytes, glibc uses 108, and the documentation
@@ -297,13 +308,27 @@ static void pytb_main_loop()
     }
 }
 
-#ifdef DEBUG
+#ifdef PYTB_UWSGI_PLUGIN
+
+static int uwsgi_pytb_init()
+{
+    uwsgi_log("pytb initializing\n");
+    return 0;
+}
+
+struct uwsgi_plugin pytb_plugin = {
+        .name = "pytb",
+        .init = uwsgi_pytb_init,
+};
+
+#else
 
 int main(void);
 
-#endif /* DEBUG */
 
 int main()
 {
     pytb_main_loop();
 }
+
+#endif /* PYTB_UWSGI_PLUGIN */
